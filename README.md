@@ -78,7 +78,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "shopify": {
       "command": "node",
-      "args": ["/Users/ryan/git/Shopify-mcp-server/dist/index.js"],
+      "args": ["/Shopify-mcp-server/dist/index.js"],
       "env": {
         "SHOPIFY_STORE_URL": "your-store.myshopify.com",
         "SHOPIFY_CLIENT_ID": "your-client-id-here",

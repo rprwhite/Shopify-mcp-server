@@ -88,11 +88,16 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
-// Initialize Shopify API
+// Fetch initial token before initializing Shopify API
+console.error("Fetching initial access token...");
+const initialToken = await fetchAccessToken();
+
+// Initialize Shopify API with the initial token
 const shopify = shopifyApi({
   apiSecretKey: SHOPIFY_CLIENT_SECRET,
   apiVersion: SHOPIFY_API_VERSION,
   isCustomStoreApp: true,
+  adminApiAccessToken: initialToken,
   isEmbeddedApp: false,
   hostName: SHOPIFY_STORE_URL.replace(/^https?:\/\//, ""),
 });
