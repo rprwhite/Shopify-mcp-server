@@ -7,11 +7,16 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { shopifyApi, LATEST_API_VERSION, ApiVersion, Session } from "@shopify/shopify-api";
+import { shopifyApi, LATEST_API_VERSION, ApiVersion, Session as ShopifySession, LogSeverity } from "@shopify/shopify-api";
 import "@shopify/shopify-api/adapters/node";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+// Suppress Shopify API logging to stdout (would break MCP JSON-RPC protocol)
+// MCP servers must only write JSON-RPC messages to stdout
+const originalConsoleLog = console.log;
+console.log = () => {}; // Suppress all console.log from Shopify library
 
 // Validate required environment variables
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
@@ -88,27 +93,37 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
-// Fetch initial token before initializing Shopify API
-console.error("Fetching initial access token...");
-const initialToken = await fetchAccessToken();
-
-// Initialize Shopify API with the initial token
+// Initialize Shopify API
 const shopify = shopifyApi({
+  apiKey: SHOPIFY_CLIENT_ID,
   apiSecretKey: SHOPIFY_CLIENT_SECRET,
   apiVersion: SHOPIFY_API_VERSION,
-  isCustomStoreApp: true,
-  adminApiAccessToken: initialToken,
+  isCustomStoreApp: false,
   isEmbeddedApp: false,
   hostName: SHOPIFY_STORE_URL.replace(/^https?:\/\//, ""),
+  scopes: [], // We'll use the scopes from the access token
+  logger: {
+    // Disable all logging to avoid polluting stdout (breaks MCP protocol)
+    log: () => {},
+    level: LogSeverity.Error,
+  },
 });
 
 /**
  * Creates a session with the current valid access token
  */
-async function createSession(): Promise<Session> {
+async function createSession(): Promise<ShopifySession> {
   const accessToken = await getAccessToken();
-  const session = shopify.session.customAppSession(SHOPIFY_STORE_URL!);
-  session.accessToken = accessToken;
+
+  // Create a session using Shopify's Session class
+  const session = new ShopifySession({
+    id: `offline_${SHOPIFY_STORE_URL}`,
+    shop: SHOPIFY_STORE_URL!,
+    state: `offline_${SHOPIFY_STORE_URL}`,
+    isOnline: false,
+    accessToken: accessToken,
+  });
+
   return session;
 }
 
