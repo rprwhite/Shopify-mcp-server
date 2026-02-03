@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { shopifyApi, LATEST_API_VERSION, ApiVersion } from "@shopify/shopify-api";
+import { shopifyApi, LATEST_API_VERSION, ApiVersion, Session } from "@shopify/shopify-api";
 import "@shopify/shopify-api/adapters/node";
 import dotenv from "dotenv";
 
@@ -15,25 +15,97 @@ dotenv.config();
 
 // Validate required environment variables
 const SHOPIFY_STORE_URL = process.env.SHOPIFY_STORE_URL;
-const SHOPIFY_ACCESS_TOKEN = process.env.SHOPIFY_ACCESS_TOKEN;
+const SHOPIFY_CLIENT_ID = process.env.SHOPIFY_CLIENT_ID;
+const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 const SHOPIFY_API_VERSION = (process.env.SHOPIFY_API_VERSION || LATEST_API_VERSION) as ApiVersion;
 
-if (!SHOPIFY_STORE_URL || !SHOPIFY_ACCESS_TOKEN) {
-  console.error("Error: SHOPIFY_STORE_URL and SHOPIFY_ACCESS_TOKEN must be set in environment variables");
+if (!SHOPIFY_STORE_URL || !SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) {
+  console.error("Error: SHOPIFY_STORE_URL, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET must be set in environment variables");
   process.exit(1);
+}
+
+// Token management
+interface TokenCache {
+  accessToken: string;
+  expiresAt: number;
+}
+
+let tokenCache: TokenCache | null = null;
+
+/**
+ * Fetches a new access token using the client credentials grant flow
+ */
+async function fetchAccessToken(): Promise<string> {
+  const shop = SHOPIFY_STORE_URL!.replace(/^https?:\/\//, "");
+  const tokenUrl = `https://${shop}/admin/oauth/access_token`;
+
+  const params = new URLSearchParams({
+    grant_type: "client_credentials",
+    client_id: SHOPIFY_CLIENT_ID!,
+    client_secret: SHOPIFY_CLIENT_SECRET!,
+  });
+
+  try {
+    const response = await fetch(tokenUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to fetch access token: ${response.status} ${response.statusText}\n${errorText}`);
+    }
+
+    const data = await response.json();
+
+    // Token expires in 24 hours (86399 seconds), but we'll refresh it 5 minutes early
+    const expiresAt = Date.now() + ((data.expires_in - 300) * 1000);
+
+    tokenCache = {
+      accessToken: data.access_token,
+      expiresAt,
+    };
+
+    console.error("Successfully obtained new access token");
+    return data.access_token;
+  } catch (error: any) {
+    console.error("Error fetching access token:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Gets a valid access token, refreshing if necessary
+ */
+async function getAccessToken(): Promise<string> {
+  if (!tokenCache || Date.now() >= tokenCache.expiresAt) {
+    console.error("Token expired or not cached, fetching new token...");
+    return await fetchAccessToken();
+  }
+  return tokenCache.accessToken;
 }
 
 // Initialize Shopify API
 const shopify = shopifyApi({
-  apiSecretKey: "not-needed-for-admin-api",
+  apiSecretKey: SHOPIFY_CLIENT_SECRET,
   apiVersion: SHOPIFY_API_VERSION,
   isCustomStoreApp: true,
-  adminApiAccessToken: SHOPIFY_ACCESS_TOKEN,
   isEmbeddedApp: false,
   hostName: SHOPIFY_STORE_URL.replace(/^https?:\/\//, ""),
 });
 
-const session = shopify.session.customAppSession(SHOPIFY_STORE_URL);
+/**
+ * Creates a session with the current valid access token
+ */
+async function createSession(): Promise<Session> {
+  const accessToken = await getAccessToken();
+  const session = shopify.session.customAppSession(SHOPIFY_STORE_URL!);
+  session.accessToken = accessToken;
+  return session;
+}
 
 // Create MCP server
 const server = new Server(
@@ -254,6 +326,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   try {
+    const session = await createSession();
     const client = new shopify.clients.Rest({ session });
 
     switch (name) {

@@ -14,24 +14,28 @@ A Model Context Protocol (MCP) server for integrating with Shopify Admin API. Th
 
 - Node.js 18 or higher
 - A Shopify store with Admin API access
-- Shopify Admin API access token
+- Shopify app client credentials (Client ID and Client Secret)
 
 ## Setup
 
 ### 1. Get Shopify API Credentials
 
-You need to create a custom app in your Shopify admin to get an access token:
+As of January 1, 2026, Shopify requires using the **Client Credentials Grant** flow for server-to-server authentication. You need to create a custom app in your Shopify admin to get client credentials:
 
 1. Go to your Shopify admin panel
 2. Navigate to **Settings** → **Apps and sales channels** → **Develop apps**
 3. Click **Create an app** and give it a name
-4. Go to **API credentials** tab
+4. Go to **Configuration** tab
 5. Under **Admin API access scopes**, select the scopes you need:
    - `read_products` - for product access
    - `read_orders` - for order access
    - `read_customers` - for customer access
    - `read_inventory` - for inventory levels
-6. Click **Install app** and reveal your **Admin API access token**
+6. Click **Save** to save your configuration
+7. Go to **API credentials** tab
+8. Copy your **Client ID** and **Client Secret**
+
+**Important:** The MCP server will automatically obtain and refresh access tokens using these credentials. Access tokens are valid for 24 hours and will be automatically refreshed before expiration.
 
 ### 2. Install Dependencies
 
@@ -51,7 +55,8 @@ Edit `.env` with your Shopify credentials:
 
 ```env
 SHOPIFY_STORE_URL=your-store.myshopify.com
-SHOPIFY_ACCESS_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxxx
+SHOPIFY_CLIENT_ID=your-client-id-here
+SHOPIFY_CLIENT_SECRET=your-client-secret-here
 SHOPIFY_API_VERSION=2024-01
 ```
 
@@ -73,10 +78,11 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
   "mcpServers": {
     "shopify": {
       "command": "node",
-      "args": ["/Users/ryan/git/SomedaySomehowBeer/Shopify-mcp-server/dist/index.js"],
+      "args": ["/Users/ryan/git/Shopify-mcp-server/dist/index.js"],
       "env": {
         "SHOPIFY_STORE_URL": "your-store.myshopify.com",
-        "SHOPIFY_ACCESS_TOKEN": "shpat_xxxxxxxxxxxxxxxxxxxxx",
+        "SHOPIFY_CLIENT_ID": "your-client-id-here",
+        "SHOPIFY_CLIENT_SECRET": "your-client-secret-here",
         "SHOPIFY_API_VERSION": "2024-01"
       }
     }
@@ -197,15 +203,23 @@ You can test the server directly using the MCP Inspector or by connecting it to 
 
 ## Security Notes
 
-- Never commit your `.env` file or expose your access token
+- Never commit your `.env` file or expose your client credentials
+- Store your Client ID and Client Secret securely
 - Use appropriate API scopes - only request the permissions you need
-- Rotate your access tokens regularly
+- Rotate your client credentials if they are ever compromised
 - Monitor your API usage in Shopify admin
+- Access tokens are automatically managed and refreshed every 24 hours
 
 ## Troubleshooting
 
-### "SHOPIFY_STORE_URL and SHOPIFY_ACCESS_TOKEN must be set"
+### "SHOPIFY_STORE_URL, SHOPIFY_CLIENT_ID, and SHOPIFY_CLIENT_SECRET must be set"
 Make sure your `.env` file exists and contains valid credentials, or that environment variables are properly set in your Claude Desktop configuration.
+
+### "Failed to fetch access token"
+This error occurs when the client credentials are invalid or the app doesn't have permission to access the store. Verify that:
+- Your Client ID and Client Secret are correct
+- The app is installed on your Shopify store
+- The app has the necessary API access scopes configured
 
 ### API Rate Limits
 Shopify has rate limits on API requests. The server doesn't currently implement rate limiting, so be mindful of rapid successive requests.
