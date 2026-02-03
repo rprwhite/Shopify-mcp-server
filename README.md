@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) server for integrating with Shopify Admin API. Th
 - **Customer Management**: Access and search customer information
 - **Inventory Tracking**: Check inventory levels across locations
 - **Collections**: Access custom and smart collections
+- **Pagination Support**: Fetch large datasets using cursor-based pagination (up to 250 items per page)
 
 ## Prerequisites
 
@@ -97,13 +98,35 @@ After adding the configuration, restart Claude Desktop.
 
 ## Available Tools
 
+### Pagination
+
+All list endpoints (`get_products`, `get_orders`, `get_customers`, `search_products`, `search_customers`, `get_inventory_levels`, `get_collections`) support cursor-based pagination.
+
+**How it works:**
+1. Make an initial request without `page_info`
+2. The response includes a `pagination` object with:
+   - `has_next_page`: Boolean indicating if more results exist
+   - `has_previous_page`: Boolean indicating if previous results exist
+   - `next_page_info`: Cursor string to fetch the next page (if available)
+   - `previous_page_info`: Cursor string to fetch the previous page (if available)
+3. To fetch the next page, use the `next_page_info` value in the `page_info` parameter
+4. Repeat until `has_next_page` is `false`
+
+**Example workflow:**
+```
+1. get_customers(limit: 250) → returns 250 customers + next_page_info
+2. get_customers(limit: 250, page_info: "cursor_abc") → returns next 250 customers
+3. Continue until has_next_page is false
+```
+
 ### Products
 
 #### `get_products`
-Retrieve products with optional filtering.
+Retrieve products with optional filtering. Supports pagination.
 
 **Parameters:**
 - `limit` (number, optional): Number of products to retrieve (max 250, default 50)
+- `page_info` (string, optional): Pagination cursor from previous response
 - `status` (string, optional): Filter by status ("active", "archived", "draft")
 - `product_type` (string, optional): Filter by product type
 - `vendor` (string, optional): Filter by vendor
@@ -116,19 +139,21 @@ Get detailed information about a specific product.
 - `product_id` (string, required): The ID of the product
 
 #### `search_products`
-Search products by title.
+Search products by title. Supports pagination.
 
 **Parameters:**
 - `query` (string, required): Search query string
 - `limit` (number, optional): Number of results (max 250, default 50)
+- `page_info` (string, optional): Pagination cursor from previous response
 
 ### Orders
 
 #### `get_orders`
-Retrieve orders with optional filtering.
+Retrieve orders with optional filtering. Supports pagination.
 
 **Parameters:**
 - `limit` (number, optional): Number of orders (max 250, default 50)
+- `page_info` (string, optional): Pagination cursor from previous response
 - `status` (string, optional): Filter by status ("open", "closed", "cancelled", "any")
 - `financial_status` (string, optional): Filter by financial status
 - `fulfillment_status` (string, optional): Filter by fulfillment status
@@ -142,10 +167,11 @@ Get detailed information about a specific order.
 ### Customers
 
 #### `get_customers`
-Retrieve customers from the store.
+Retrieve customers from the store. Supports pagination.
 
 **Parameters:**
 - `limit` (number, optional): Number of customers (max 250, default 50)
+- `page_info` (string, optional): Pagination cursor from previous response
 
 #### `get_customer`
 Get detailed information about a specific customer.
@@ -154,11 +180,12 @@ Get detailed information about a specific customer.
 - `customer_id` (string, required): The ID of the customer
 
 #### `search_customers`
-Search customers by email, name, or phone.
+Search customers by email, name, or phone. Supports pagination.
 
 **Parameters:**
 - `query` (string, required): Search query (email, name, or phone)
 - `limit` (number, optional): Number of results (max 250, default 50)
+- `page_info` (string, optional): Pagination cursor from previous response
 
 ### Inventory
 

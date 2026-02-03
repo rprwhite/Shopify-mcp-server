@@ -93,6 +93,35 @@ async function getAccessToken(): Promise<string> {
   return tokenCache.accessToken;
 }
 
+/**
+ * Extracts pagination info from Shopify API response headers
+ */
+function extractPaginationInfo(headers: any): { next?: string; previous?: string } {
+  const linkHeader = headers?.link || headers?.Link;
+  if (!linkHeader) return {};
+
+  const pagination: { next?: string; previous?: string } = {};
+
+  // Parse Link header: <url>; rel="next", <url>; rel="previous"
+  const links = linkHeader.split(',');
+
+  for (const link of links) {
+    const match = link.match(/<([^>]+)>;\s*rel="([^"]+)"/);
+    if (match) {
+      const url = match[1];
+      const rel = match[2];
+
+      // Extract page_info from URL
+      const pageInfoMatch = url.match(/[?&]page_info=([^&]+)/);
+      if (pageInfoMatch && (rel === 'next' || rel === 'previous')) {
+        pagination[rel as 'next' | 'previous'] = pageInfoMatch[1];
+      }
+    }
+  }
+
+  return pagination;
+}
+
 // Initialize Shopify API
 const shopify = shopifyApi({
   apiKey: SHOPIFY_CLIENT_ID,
@@ -144,7 +173,7 @@ const server = new Server(
 const tools: Tool[] = [
   {
     name: "get_products",
-    description: "Retrieve products from Shopify store. Supports pagination and filtering by status, product type, vendor, or collection.",
+    description: "Retrieve products from Shopify store. Supports pagination and filtering by status, product type, vendor, or collection. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -152,6 +181,10 @@ const tools: Tool[] = [
           type: "number",
           description: "Number of products to retrieve (max 250)",
           default: 50,
+        },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
         },
         status: {
           type: "string",
@@ -189,7 +222,7 @@ const tools: Tool[] = [
   },
   {
     name: "search_products",
-    description: "Search products by title or description",
+    description: "Search products by title or description. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -202,13 +235,17 @@ const tools: Tool[] = [
           description: "Number of results to return (max 250)",
           default: 50,
         },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
+        },
       },
       required: ["query"],
     },
   },
   {
     name: "get_orders",
-    description: "Retrieve orders from Shopify store with optional filtering",
+    description: "Retrieve orders from Shopify store with optional filtering. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -216,6 +253,10 @@ const tools: Tool[] = [
           type: "number",
           description: "Number of orders to retrieve (max 250)",
           default: 50,
+        },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
         },
         status: {
           type: "string",
@@ -252,7 +293,7 @@ const tools: Tool[] = [
   },
   {
     name: "get_customers",
-    description: "Retrieve customers from Shopify store",
+    description: "Retrieve customers from Shopify store. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -260,6 +301,10 @@ const tools: Tool[] = [
           type: "number",
           description: "Number of customers to retrieve (max 250)",
           default: 50,
+        },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
         },
       },
     },
@@ -280,7 +325,7 @@ const tools: Tool[] = [
   },
   {
     name: "search_customers",
-    description: "Search customers by email, name, or phone",
+    description: "Search customers by email, name, or phone. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -293,13 +338,17 @@ const tools: Tool[] = [
           description: "Number of results to return (max 250)",
           default: 50,
         },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
+        },
       },
       required: ["query"],
     },
   },
   {
     name: "get_inventory_levels",
-    description: "Get inventory levels for products at specific locations",
+    description: "Get inventory levels for products at specific locations. Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -318,12 +367,16 @@ const tools: Tool[] = [
           description: "Number of results (max 250)",
           default: 50,
         },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
+        },
       },
     },
   },
   {
     name: "get_collections",
-    description: "Retrieve product collections (custom and smart collections)",
+    description: "Retrieve product collections (custom and smart collections). Returns pagination cursors for fetching additional pages.",
     inputSchema: {
       type: "object",
       properties: {
@@ -331,6 +384,10 @@ const tools: Tool[] = [
           type: "number",
           description: "Number of collections to retrieve (max 250)",
           default: 50,
+        },
+        page_info: {
+          type: "string",
+          description: "Pagination cursor from a previous response to fetch the next or previous page",
         },
       },
     },
@@ -354,17 +411,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const params: any = {
           limit: (args?.limit as number) || 50,
         };
+        if (args?.page_info) params.page_info = args.page_info;
         if (args?.status) params.status = args.status;
         if (args?.product_type) params.product_type = args.product_type;
         if (args?.vendor) params.vendor = args.vendor;
         if (args?.collection_id) params.collection_id = args.collection_id;
 
         const response = await client.get({ path: "products", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -385,18 +455,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "search_products": {
-        const response = await client.get({
-          path: "products",
-          query: {
-            limit: (args?.limit as number) || 50,
-            title: args?.query,
-          } as any,
-        });
+        const params: any = {
+          limit: (args?.limit as number) || 50,
+          title: args?.query,
+        };
+        if (args?.page_info) params.page_info = args.page_info;
+
+        const response = await client.get({ path: "products", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -407,15 +489,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: (args?.limit as number) || 50,
           status: args?.status || "any",
         };
+        if (args?.page_info) params.page_info = args.page_info;
         if (args?.financial_status) params.financial_status = args.financial_status;
         if (args?.fulfillment_status) params.fulfillment_status = args.fulfillment_status;
 
         const response = await client.get({ path: "orders", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -436,15 +531,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "get_customers": {
-        const response = await client.get({
-          path: "customers",
-          query: { limit: (args?.limit as number) || 50 } as any,
-        });
+        const params: any = { limit: (args?.limit as number) || 50 };
+        if (args?.page_info) params.page_info = args.page_info;
+
+        const response = await client.get({ path: "customers", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -465,18 +572,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "search_customers": {
-        const response = await client.get({
-          path: "customers/search",
-          query: {
-            query: args?.query,
-            limit: (args?.limit as number) || 50,
-          } as any,
-        });
+        const params: any = {
+          query: args?.query,
+          limit: (args?.limit as number) || 50,
+        };
+        if (args?.page_info) params.page_info = args.page_info;
+
+        const response = await client.get({ path: "customers/search", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -484,6 +603,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "get_inventory_levels": {
         const params: any = { limit: (args?.limit as number) || 50 };
+        if (args?.page_info) params.page_info = args.page_info;
         if (args?.inventory_item_ids && Array.isArray(args.inventory_item_ids)) {
           params.inventory_item_ids = args.inventory_item_ids.join(",");
         }
@@ -491,15 +611,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           params.location_ids = args.location_ids.join(",");
         }
 
-        const response = await client.get({
-          path: "inventory_levels",
-          query: params,
-        });
+        const response = await client.get({ path: "inventory_levels", query: params });
+        const pagination = extractPaginationInfo(response.headers);
+
+        const result: any = {
+          data: response.body,
+          pagination: {
+            has_next_page: !!pagination.next,
+            has_previous_page: !!pagination.previous,
+            next_page_info: pagination.next,
+            previous_page_info: pagination.previous,
+          },
+        };
+
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(response.body, null, 2),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
@@ -507,29 +636,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "get_collections": {
         const limit = (args?.limit as number) || 50;
+        const customParams: any = { limit: Math.floor(limit / 2) };
+        const smartParams: any = { limit: Math.floor(limit / 2) };
+
+        if (args?.page_info) {
+          customParams.page_info = args.page_info;
+          smartParams.page_info = args.page_info;
+        }
+
         const [customResponse, smartResponse] = await Promise.all([
-          client.get({
-            path: "custom_collections",
-            query: { limit: Math.floor(limit / 2) } as any,
-          }),
-          client.get({
-            path: "smart_collections",
-            query: { limit: Math.floor(limit / 2) } as any,
-          }),
+          client.get({ path: "custom_collections", query: customParams }),
+          client.get({ path: "smart_collections", query: smartParams }),
         ]);
+
+        const customPagination = extractPaginationInfo(customResponse.headers);
+        const smartPagination = extractPaginationInfo(smartResponse.headers);
+
+        const result = {
+          data: {
+            custom_collections: customResponse.body,
+            smart_collections: smartResponse.body,
+          },
+          pagination: {
+            custom_collections: {
+              has_next_page: !!customPagination.next,
+              has_previous_page: !!customPagination.previous,
+              next_page_info: customPagination.next,
+              previous_page_info: customPagination.previous,
+            },
+            smart_collections: {
+              has_next_page: !!smartPagination.next,
+              has_previous_page: !!smartPagination.previous,
+              next_page_info: smartPagination.next,
+              previous_page_info: smartPagination.previous,
+            },
+          },
+        };
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(
-                {
-                  custom_collections: customResponse.body,
-                  smart_collections: smartResponse.body,
-                },
-                null,
-                2
-              ),
+              text: JSON.stringify(result, null, 2),
             },
           ],
         };
