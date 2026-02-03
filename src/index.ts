@@ -97,8 +97,19 @@ async function getAccessToken(): Promise<string> {
  * Extracts pagination info from Shopify API response headers
  */
 function extractPaginationInfo(headers: any): { next?: string; previous?: string } {
-  const linkHeader = headers?.link || headers?.Link;
+  let linkHeader = headers?.link || headers?.Link;
   if (!linkHeader) return {};
+
+  // Handle case where linkHeader might be an array (some HTTP libraries return headers as arrays)
+  if (Array.isArray(linkHeader)) {
+    linkHeader = linkHeader[0];
+  }
+
+  // Ensure linkHeader is a string
+  if (typeof linkHeader !== 'string') {
+    console.error("Link header is not a string:", typeof linkHeader, linkHeader);
+    return {};
+  }
 
   const pagination: { next?: string; previous?: string } = {};
 
